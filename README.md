@@ -1,93 +1,114 @@
-# EKS + Bastion Terraform Setup
+# EKS Terraform Automation — Siva
 
-This Terraform project converts your manual `eksctl` + bash script into fully automated, repeatable Infrastructure as Code.
+Terraform project for a fresh EKS cluster in **us-east-1**, with EBS CSI storage, Prometheus/Grafana monitoring, and Argo CD GitOps.
 
-## What this creates
+## Architecture
 
-| Resource                     | Equivalent to your original script step                                      |
-|-------------------------------|--------------------------------------------------------------------------------|
-| VPC + 3 public + 3 private subnets | Required networking (your script relied on default VPC implicitly via eksctl) |
-| Bastion EC2 (Ubuntu, `m7i-flex.large`, 30 GB EBS) | Manual host where you ran Step 1 & Step 2 commands |
-| `user_data` bootstrap script  | STEP-1 (apt update, unzip) + STEP-2 (AWS CLI, kubectl, eksctl install) — now automatic |
-| EKS Cluster (`raham-cluster-1`, v1.32) | `eksctl create cluster --name=raham-cluster-1 --version 1.32 ...` |
-| IAM OIDC Provider             | `eksctl utils associate-iam-oidc-provider --approve` |
-| EKS Managed Nodegroup         | `eksctl create nodegroup --cluster=raham-cluster-1 ...` |
+- VPC with public and private subnets across 3 AZs; one NAT Gateway to reduce cost.
+- EKS managed node group in private subnets.
+- Dedicated IRSA role for the AWS EBS CSI managed add-on.
+- EBS gp3 StorageClass (created by the EKS add-on; verify before installing workloads).
+- Separate Terraform root in `addons/` for Helm releases. The cluster must exist before Kubernetes/Helm providers can connect.
 
-## Key fixes applied vs. your original script
+## Security and cost notes
 
-1. **Removed the second cluster/nodegroup in `us-east-1`** — your script had `raham-cluster2` as the cluster name in the second `eksctl create nodegroup` command, but the `--cluster` flag still pointed to a cluster that doesn't exist there. EKS clusters are also region-bound — a nodegroup cannot span two regions under one cluster. If you genuinely need multi-region, that requires two separate cluster definitions (see "Going multi-region" below).
-2. **`t3.micro` → `t3.medium`** for worker nodes. `t3.micro` (1 vCPU, 1 GB RAM) is below the practical minimum for EKS worker nodes — kubelet, kube-proxy, and the CNI plugin alone consume a large share of that memory, leaving little for actual pods.
-3. **Nodes placed in private subnets** — production best practice. Only the bastion host gets a public IP.
-4. **All IAM policies your eksctl flags implied** (`--asg-access`, `--external-dns-access`, `--full-ecr-access`, `--appmesh-access`, `--alb-ingress-access`) are attached as explicit IAM policies on the node IAM role.
-
-## File structure
-
-```
-eks-terraform/
-├── providers.tf          # AWS + Kubernetes provider config
-├── variables.tf          # All configurable inputs
-├── vpc.tf                # VPC, public/private subnets
-├── bastion.tf            # Bastion EC2 host + security group
-├── eks.tf                # EKS cluster + managed nodegroup
-├── outputs.tf            # Cluster endpoint, kubeconfig command, etc.
-├── terraform.tfvars      # Your actual values — edit this file
-└── scripts/
-    └── bastion_bootstrap.sh.tpl   # Runs AWS CLI/kubectl/eksctl install on first boot
-```
+- Never commit Terraform state, plan files, credentials, private keys, or real `.tfvars`.
+- Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in a valid us-east-1 Ubuntu AMI ID, existing EC2 key pair, and your public IP as `x.x.x.x/32`.
+- Do not expose SSH to `0.0.0.0/0`.
+- Billable resources include EKS control plane, EC2 nodes, NAT Gateway, EBS volumes, and public Network Load Balancers. Destroy lab resources when finished.
+- Example uses two `t3.large` nodes. Confirm availability and cost in your account before applying.
+- Public Grafana and Argo CD NLBs are internet-facing. For production, use an authenticated ingress/WAF or restrict access. Change default credentials immediately.
 
 ## Prerequisites
 
-1. Terraform >= 1.5.0 installed locally
-2. AWS credentials configured (`aws configure` or environment variables) with permissions to create VPC, EC2, EKS, and IAM resources
-3. An existing EC2 key pair named `eksss` in `ap-south-1` (or update `key_pair_name` in `terraform.tfvars`)
+Terraform >= 1.5, AWS CLI, kubectl, and AWS credentials with permissions to create VPC, EC2, EKS, IAM/OIDC, EKS add-ons, and ELB resources.
 
-## One-shot deployment
+## Stage 1 — Create infrastructure
 
 ```bash
-# 1. Initialize Terraform (downloads providers + modules)
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars: AMI ID, key pair, and SSH CIDR are mandatory.
 terraform init
-
-# 2. Review the plan
+terraform fmt -recursive
+terraform validate
 terraform plan
-
-# 3. Apply — creates VPC, bastion host, EKS cluster, and nodegroup in one command
-terraform apply -auto-approve
+# Review the plan carefully, then:
+terraform apply
 ```
 
-This single `terraform apply` will:
-- Create the VPC and subnets
-- Launch the bastion host and auto-install AWS CLI, kubectl, eksctl, and helm via `user_data`
-- Provision the EKS cluster control plane
-- Associate the IAM OIDC provider (enables IRSA for future add-ons like cluster-autoscaler, ALB ingress controller)
-- Create the managed nodegroup with 2 nodes (autoscaling between 2 and 6)
+Do not use `-auto-approve` on the first deployment. EKS creation may take 15–25 minutes.
 
-Typical apply time: **15–20 minutes** (EKS control plane provisioning is the slowest part — usually 10-12 minutes alone).
-
-## After apply — connect to your cluster
+## Stage 2 — Configure kubectl and verify EBS CSI
 
 ```bash
-# Get all outputs including bastion IP and kubeconfig command
-terraform output
-
-# SSH into the bastion host
-ssh -i eksss.pem ubuntu@$(terraform output -raw bastion_public_ip)
-
-# On the bastion host, configure kubectl (also auto-added to .bashrc)
-aws eks update-kubeconfig --region ap-south-1 --name raham-cluster-1
-
-# Verify nodes are up
+aws eks update-kubeconfig --region us-east-1 --name siva-cluster-1
 kubectl get nodes
-kubectl cluster-info
+aws eks describe-addon --cluster-name siva-cluster-1 --addon-name aws-ebs-csi-driver --region us-east-1
+kubectl get pods -n kube-system | grep ebs-csi
+kubectl get storageclass
 ```
 
-## Going multi-region (if you actually need the second cluster)
-
-If you do want a second cluster in `us-east-1` as your original script attempted, duplicate this entire project into a second directory (e.g. `eks-terraform-us-east-1/`) with its own `terraform.tfvars` pointing `aws_region = "us-east-1"` and a distinct `cluster_name`. EKS has no native cross-region cluster support — each region needs its own independent Terraform state and apply.
-
-## Destroying everything
+Confirm the EBS CSI controller is healthy and a gp3 StorageClass exists. If gp3 is absent, create it:
 
 ```bash
-terraform destroy -auto-approve
+cat <<'YAML' | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+YAML
 ```
 
-This tears down the nodegroup, cluster, bastion host, and VPC in the correct dependency order — no manual cleanup needed.
+## Stage 3 — Install Prometheus, Grafana, and Argo CD
+
+`addons/` is a separate Terraform root with its own state:
+
+```bash
+cd addons
+terraform init
+terraform fmt -recursive
+terraform validate
+terraform plan
+# Review, then:
+terraform apply
+```
+
+The kube-prometheus-stack chart installs Prometheus, Alertmanager, Grafana, and cluster monitoring components. Prometheus and Alertmanager use gp3 PVCs. Grafana and Argo CD receive internet-facing AWS Network Load Balancers.
+
+```bash
+kubectl get svc -n monitoring
+kubectl get svc -n argocd
+terraform output
+```
+
+Retrieve initial passwords securely:
+
+```bash
+kubectl get secret -n monitoring kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
+kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+Username is `admin` for both. Change passwords after first login. Never commit or share passwords.
+
+## Cleanup
+
+Destroy add-ons first, then infrastructure:
+
+```bash
+cd addons && terraform destroy
+cd ..
+terraform destroy
+```
+
+Check AWS for leftover EBS volumes, load balancers, NAT gateways, and snapshots.
+
+## Notes
+
+- Verify the selected Kubernetes version and EC2 instance type are currently supported/available in us-east-1 before deployment.
+- The add-ons state assumes the root stack and EBS CSI add-on are already deployed.
+- This is a learning/lab baseline, not a production-hardened platform.
