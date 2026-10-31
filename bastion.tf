@@ -104,7 +104,8 @@ resource "aws_instance" "bastion" {
 
   user_data = templatefile("${path.module}/bastion_bootstrap.sh.tpl", {
     aws_region   = var.aws_region
-    cluster_name = var.cluster_name
+    cluster_name    = var.cluster_name
+    cluster_version = var.cluster_version
   })
 
   tags = {
