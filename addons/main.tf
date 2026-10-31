@@ -1,3 +1,18 @@
+# Create the CSI-backed gp3 StorageClass before installing persistent workloads.
+resource "kubernetes_storage_class_v1" "gp3" {
+  metadata {
+    name = "gp3"
+  }
+
+  storage_provisioner    = "ebs.csi.aws.com"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  allow_volume_expansion = true
+
+  parameters = {
+    type = "gp3"
+  }
+}
+
 # Run this Terraform root only AFTER the EKS cluster and EBS CSI add-on are ready.
 # Example: cd addons && terraform init && terraform plan && terraform apply
 
@@ -10,7 +25,7 @@ resource "helm_release" "kube_prometheus_stack" {
   timeout          = 900
   wait             = true
 
-  values = [yamlencode({
+  depends_on = [kubernetes_storage_class_v1.gp3]\n\n  depends_on = [kubernetes_storage_class_v1.gp3]\n\n  values = [yamlencode({
     prometheus = {
       prometheusSpec = {
         retention = "7d"
