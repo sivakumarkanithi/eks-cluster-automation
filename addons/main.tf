@@ -9,12 +9,12 @@ resource "kubernetes_storage_class_v1" "gp3" {
   allow_volume_expansion = true
 
   parameters = {
-    type = "gp3"
+    type      = "gp3"
+    encrypted = "true"
   }
 }
 
 # Run this Terraform root only AFTER the EKS cluster and EBS CSI add-on are ready.
-# Example: cd addons && terraform init && terraform plan && terraform apply
 
 resource "helm_release" "kube_prometheus_stack" {
   name             = "kube-prometheus-stack"
@@ -25,7 +25,9 @@ resource "helm_release" "kube_prometheus_stack" {
   timeout          = 900
   wait             = true
 
-  depends_on = [kubernetes_storage_class_v1.gp3]\n\n  depends_on = [kubernetes_storage_class_v1.gp3]\n\n  values = [yamlencode({
+  depends_on = [kubernetes_storage_class_v1.gp3]
+
+  values = [yamlencode({
     prometheus = {
       prometheusSpec = {
         retention = "7d"
@@ -72,16 +74,11 @@ resource "helm_release" "kube_prometheus_stack" {
   })]
 }
 
-# Expose Grafana through an AWS Network Load Balancer.
+# Expose Grafana through a Kubernetes LoadBalancer service.
 resource "kubernetes_service_v1" "grafana_lb" {
   metadata {
     name      = "grafana-public"
     namespace = "monitoring"
-    annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-type"   = "external"
-      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
-      "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
-    }
   }
 
   spec {
@@ -123,11 +120,6 @@ resource "kubernetes_service_v1" "argocd_lb" {
   metadata {
     name      = "argocd-public"
     namespace = "argocd"
-    annotations = {
-      "service.beta.kubernetes.io/aws-load-balancer-type"   = "external"
-      "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" = "ip"
-      "service.beta.kubernetes.io/aws-load-balancer-scheme" = "internet-facing"
-    }
   }
 
   spec {
