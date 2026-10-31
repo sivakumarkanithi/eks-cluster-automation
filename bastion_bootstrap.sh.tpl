@@ -4,7 +4,7 @@
 # Automates everything from the original manual STEP-1 and STEP-2:
 #   - apt update + unzip
 #   - AWS CLI v2 installation
-#   - kubectl installation (v1.35.0 to match your original script)
+#   - kubectl installation matching the configured EKS cluster version
 #   - eksctl installation
 # Runs automatically on first boot via EC2 user_data — no manual SSH needed.
 # ───────────────────────────────────────────────
@@ -26,8 +26,8 @@ unzip -o awscliv2.zip
 ./aws/install
 aws --version
 
-# STEP 2b: kubectl installation (matching your specified v1.35.0)
-curl -LO "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl"
+# STEP 2b: kubectl installation matching the EKS control-plane minor version
+curl -LO "https://dl.k8s.io/release/v${cluster_version}.0/bin/linux/amd64/kubectl"
 chmod +x kubectl
 mv kubectl /usr/local/bin/kubectl
 kubectl version --client
