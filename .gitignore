@@ -1,4 +1,20 @@
-terraform.tfstate
-terraform.tfstate.backup
-.terraform
-.terraform.lock.hcl
+# Terraform local data and state (never commit state or plans)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Local variables and credentials
+*.tfvars
+!terraform.tfvars.example
+*.pem
+*.key
+.env

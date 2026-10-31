@@ -1,0 +1,25 @@
+aws_region   = "us-east-1"
+project_name = "siva"
+
+# Replace with a valid Ubuntu 22.04 AMI ID in us-east-1.
+bastion_ami_id           = "REPLACE_WITH_VALID_AMI_ID"
+bastion_instance_type    = "t3.medium"
+bastion_root_volume_size = 30
+key_pair_name            = "REPLACE_WITH_EXISTING_EC2_KEY_PAIR"
+# Set to YOUR_PUBLIC_IP/32 before apply. Do not use 0.0.0.0/0.
+ssh_allowed_cidr         = "REPLACE_WITH_YOUR_PUBLIC_IP/32"
+
+vpc_cidr             = "10.0.0.0/16"
+azs                  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+private_subnet_cidrs = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+cluster_name    = "siva-cluster-1"
+cluster_version = "1.32"
+
+nodegroup_name      = "siva-cluster-ng-1"
+node_instance_types = ["t3.large"]
+node_volume_size    = 30
+node_desired_size   = 2
+node_min_size       = 1
+node_max_size       = 3
